@@ -1,0 +1,6 @@
+face_1:
+  preparation: true
+  video_path: ./data/video/face_1_idle.mp4
+  bbox_shift: 0
+  audio_clips:
+    0: ./data/audio/silence.wav
