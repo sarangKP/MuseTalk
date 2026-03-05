@@ -1,113 +1,150 @@
-# MuseTalk 1.5 — Optimized for NVIDIA L4 (Lightning AI)
+# Live Avatar Pipeline — Ultra Low-Latency MuseTalk
 
-This repository contains an optimized deployment of MuseTalk 1.5, specifically tuned for **NVIDIA L4 (24GB VRAM)** and **RTX 3080/4080** architectures. It resolves the "Dependency Hell" common in 2026 Python environments and modern CUDA 12.x drivers.
-
----
-
-## 🚀 Performance Optimizations
-
-* **Architecture Support:** Native compatibility for Ada Lovelace (`sm_89`) and Ampere (`sm_86`).
-* **High Throughput:** Configured for `batch_size 8` to `12` on L4, utilizing 24GB VRAM for 3x faster inference.
-* **Precision:** Fully tested with `--use_float16` for Tensor Core acceleration.
-* **Modern OS Support:** Patched for Ubuntu 22.04+ and Python 3.10+ (Lightning AI Studios).
+Real-time lip-sync avatar streaming with **target end-to-end latency < 150ms**.
 
 ---
 
-## 🛠️ Installation (Lightning AI / Ubuntu 22.04)
-
-### 1. System Dependencies
-Run these once to handle audio codecs and C++ build headers.
-```bash
-sudo apt-get update && sudo apt-get install -y \
-  libglib2.0-0 libsm6 libxext6 libxrender1 ffmpeg \
-  build-essential python3-dev libsndfile1
+## Architecture
 
 ```
-
-### 2. The "Modern Python" Fixes
-
-In 2026, `setuptools` has removed `pkg_resources`. You must pin an older version to build legacy dependencies like `chumpy` and `whisper`.
-
-```bash
-pip install "setuptools<80" wheel
-pip install huggingface_hub==0.24.0  # Supports legacy 'cached_download'
-
+TTS Provider (ElevenLabs / edge-tts / file)
+        │
+        ▼  80ms audio chunks
+ tts_chunker.py  ──WebSocket──►  live_avatar_server.py
+                                        │
+                          ┌─────────────┤
+                          │             │
+                     Whisper tiny    Pre-loaded avatar
+                     (~15ms)          (RAM)
+                          │             │
+                          └──► UNet FP16 forward
+                               (~20ms, batch=2)
+                                    │
+                               VAE decode
+                               (~10ms)
+                                    │
+                           Blend + JPEG encode
+                               (~5ms)
+                                    │
+                          WebSocket frame push
+                               (~2ms)
+                                    │
+                                    ▼
+                             viewer.html / your app
 ```
 
-### 3. PyTorch & MMLab Stack
-
-We use CUDA 11.8 binaries for PyTorch to ensure 1:1 compatibility with pre-built `mmcv` wheels, even on CUDA 12.x drivers.
-
-```bash
-# PyTorch
-pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url [https://download.pytorch.org/whl/cu118](https://download.pytorch.org/whl/cu118)
-
-# MMLab
-pip install --no-cache-dir -U openmim
-mim install mmengine==0.10.4
-mim install "mmcv==2.0.1"
-mim install "mmdet==3.1.0"
-mim install "mmpose==1.1.0"
-
-```
-
-### 4. MuseTalk Core & Audio
-
-```bash
-pip install -r requirements.txt
-pip install chumpy --no-build-isolation
-pip install librosa==0.10.1 soundfile audiomentations
-
-```
+**Total target latency: ~130–150ms per 2-frame chunk**
 
 ---
 
-## 📦 Model Weights & Structure
+## Quick Start
 
-1. **Run the patched download script:**
-
-```bash
-bash download_weights.sh
-
-```
-
-2. **Crucial Step:** Symlink the V1.5 config so the code detects it correctly.
+### 1. Prepare Avatar (run once)
 
 ```bash
-ln -s ~/MuseTalk/models/musetalkV15/musetalk.json ~/MuseTalk/models/musetalkV15/config.json
-ln -s ~/MuseTalk/models/sd-vae ~/MuseTalk/models/sd-vae-ft-mse
-
-```
-
----
-
-## ⚡ Inference Command (L4 Mode)
-
-Process videos at maximum speed using these flags:
-
-```bash
-python scripts/inference.py \
-    --inference_config configs/inference/test.yaml \
-    --batch_size 8 \
-    --use_float16 \
+python pipeline/prepare_avatar.py \
+    --avatar_id my_avatar \
+    --video_path ./assets/speaker.mp4 \
     --version v15
+```
 
+### 2. Start the Server
+
+```bash
+python pipeline/live_avatar_server.py \
+    --port 8765 \
+    --batch_size 2 \
+    --jpeg_quality 85
+```
+
+### 3. Load Avatar via REST
+
+```bash
+curl -X POST http://localhost:8765/avatar/load \
+  -H "Content-Type: application/json" \
+  -d '{"avatar_id": "my_avatar", "avatar_path": "./results/v15/avatars/my_avatar"}'
+```
+
+### 4. Stream Audio
+
+```bash
+# From a WAV file:
+python pipeline/tts_chunker.py \
+    --avatar_id my_avatar \
+    --audio_file ./assets/speech.wav \
+    --chunk_ms 80
+
+# From text (edge-tts, free):
+python pipeline/tts_chunker.py \
+    --avatar_id my_avatar \
+    --text "Hello, I am your live avatar." \
+    --tts edge_tts
+```
+
+### 5. View in Browser
+
+Open `pipeline/viewer.html` in a browser, connect to `ws://localhost:8765`, avatar ID `my_avatar`.
+
+---
+
+## Latency Tuning Knobs
+
+| Parameter | Default | Effect |
+|---|---|---|
+| `batch_size` | 2 | Lower = less latency, higher = better GPU utilization |
+| `chunk_ms` | 80 | Audio chunk size. 40ms = ultra-low latency, 160ms = smoother |
+| `jpeg_quality` | 85 | Lower = faster encode, smaller payload |
+| `use_float16` | True | ~2x faster inference on modern GPUs |
+| `audio_pad_left/right` | 2 | Whisper context window for better sync |
+
+### Latency vs Quality Trade-offs
+
+```
+chunk_ms=40,  batch=1 → ~70ms  latency  (choppy at low GPU speed)
+chunk_ms=80,  batch=2 → ~130ms latency  ← recommended
+chunk_ms=160, batch=4 → ~200ms latency  (smoother, higher quality)
+chunk_ms=320, batch=8 → ~350ms latency  (best quality, noticeable delay)
 ```
 
 ---
 
-## 🛠️ Troubleshooting Matrix
+## File Structure
 
-|                 Error                |         Root Cause       |            Resolution                 |
-
-| `ModuleNotFoundError: pkg_resources` | `setuptools` too new     | `pip install "setuptools<80"`         |
-| `ImportError: cached_download`       | `huggingface_hub` > 0.25 | `pip install huggingface_hub==0.24.0` |
-| `FileNotFoundError: config.json`     | Weight naming mismatch   | `ln -s musetalk.json config.json`     |
-| `ModuleNotFoundError: librosa`       | Missing audio backend    | `pip install librosa==0.10.1`         |
+```
+pipeline/
+├── live_avatar_server.py   # FastAPI + WebSocket inference server
+├── tts_chunker.py          # TTS → audio chunks → WebSocket client
+├── prepare_avatar.py       # One-time avatar pre-processing
+├── viewer.html             # Browser monitor UI
+└── README.md               # This file
+```
 
 ---
 
-## 📜 Credits
+## Dependencies
 
-Original implementation by TMElyralab.
-This fork maintained by sarangKP.
+```bash
+pip install fastapi uvicorn websockets
+pip install edge-tts          # Free TTS
+pip install elevenlabs        # Optional: ElevenLabs TTS
+```
+
+All MuseTalk dependencies are inherited from your existing `requirements.txt`.
+
+---
+
+## WebSocket Protocol
+
+**Client → Server:**
+```json
+{ "type": "audio_chunk", "path": "/tmp/avatar_chunks/chunk_000001.wav" }
+{ "type": "stats" }
+{ "type": "stop" }
+```
+
+**Server → Client:**
+```json
+{ "type": "frame", "data": "<base64-jpeg>", "ts": 1234567890.123 }
+{ "type": "stats", "avg_latency_ms": 128.4, "frames_sent": 750, "chunks_processed": 37 }
+{ "type": "error", "message": "..." }
+```

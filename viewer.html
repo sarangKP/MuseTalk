@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Live Avatar Monitor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d0d0d;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    h1 { font-size: 1.4rem; font-weight: 600; margin-bottom: 20px; color: #7ec8e3; }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 480px 340px;
+      gap: 20px;
+      width: 100%;
+      max-width: 860px;
+    }
+
+    /* Video panel */
+    .video-panel {
+      background: #1a1a2e;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #2a2a4a;
+    }
+    #avatar-canvas {
+      width: 100%;
+      display: block;
+      background: #000;
+    }
+    .video-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px;
+      font-size: 0.75rem;
+      color: #888;
+      border-top: 1px solid #2a2a4a;
+    }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #555; display: inline-block; margin-right: 6px;
+    }
+    .status-dot.live { background: #00e676; box-shadow: 0 0 6px #00e676; }
+
+    /* Controls panel */
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .card {
+      background: #1a1a2e;
+      border: 1px solid #2a2a4a;
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .card h3 {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #7ec8e3;
+      margin-bottom: 12px;
+    }
+    label { font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 4px; }
+    input[type="text"], input[type="number"], select {
+      width: 100%;
+      background: #0d0d1a;
+      border: 1px solid #333;
+      border-radius: 6px;
+      color: #e0e0e0;
+      padding: 7px 10px;
+      font-size: 0.82rem;
+      margin-bottom: 10px;
+    }
+    textarea {
+      width: 100%;
+      background: #0d0d1a;
+      border: 1px solid #333;
+      border-radius: 6px;
+      color: #e0e0e0;
+      padding: 8px 10px;
+      font-size: 0.82rem;
+      resize: vertical;
+      min-height: 70px;
+      margin-bottom: 10px;
+    }
+    button {
+      width: 100%;
+      padding: 9px;
+      border: none;
+      border-radius: 7px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    button:hover { opacity: 0.85; }
+    .btn-primary   { background: #7ec8e3; color: #0d0d1a; }
+    .btn-danger    { background: #ff5252; color: #fff; }
+    .btn-secondary { background: #2a2a4a; color: #ccc; }
+
+    /* Metrics */
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      padding: 4px 0;
+      border-bottom: 1px solid #222;
+    }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-label { color: #888; }
+    .metric-value { color: #e0e0e0; font-variant-numeric: tabular-nums; }
+    .metric-value.good { color: #00e676; }
+    .metric-value.warn { color: #ffd740; }
+    .metric-value.bad  { color: #ff5252; }
+
+    /* Log */
+    #log-box {
+      background: #050510;
+      border: 1px solid #222;
+      border-radius: 6px;
+      height: 120px;
+      overflow-y: auto;
+      padding: 8px;
+      font-family: monospace;
+      font-size: 0.72rem;
+      color: #7ec8e3;
+    }
+    .log-line { padding: 1px 0; }
+    .log-line.err { color: #ff5252; }
+    .log-line.ok  { color: #00e676; }
+
+    /* FPS bar */
+    .fps-bar-wrap {
+      background: #0d0d1a;
+      border-radius: 4px;
+      height: 6px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+    .fps-bar {
+      height: 100%;
+      width: 0%;
+      background: #00e676;
+      border-radius: 4px;
+      transition: width 0.3s, background 0.3s;
+    }
+  </style>
+</head>
+<body>
+  <h1>🎭 Live Avatar Monitor</h1>
+
+  <div class="main-grid">
+    <!-- Video panel -->
+    <div class="video-panel">
+      <canvas id="avatar-canvas" width="480" height="480"></canvas>
+      <div class="video-footer">
+        <span><span class="status-dot" id="status-dot"></span><span id="status-text">Disconnected</span></span>
+        <span id="fps-display">0 FPS</span>
+        <span id="frame-counter">Frame 0</span>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <!-- Connection -->
+      <div class="card">
+        <h3>Connection</h3>
+        <label>Server URL</label>
+        <input type="text" id="server-url" value="ws://localhost:8765" />
+        <label>Avatar ID</label>
+        <input type="text" id="avatar-id" value="default" />
+        <button class="btn-primary"  id="btn-connect">Connect</button>
+        <button class="btn-danger"   id="btn-disconnect" style="margin-top:6px;display:none">Disconnect</button>
+      </div>
+
+      <!-- Stream audio -->
+      <div class="card">
+        <h3>Stream Audio</h3>
+        <label>Audio file path (server-side)</label>
+        <input type="text" id="audio-path" placeholder="/tmp/speech.wav" />
+        <button class="btn-secondary" id="btn-send-audio">Send Audio Chunk</button>
+      </div>
+
+      <!-- Metrics -->
+      <div class="card">
+        <h3>Live Metrics</h3>
+        <div class="metric-row">
+          <span class="metric-label">FPS</span>
+          <span class="metric-value" id="m-fps">—</span>
+        </div>
+        <div class="fps-bar-wrap"><div class="fps-bar" id="fps-bar"></div></div>
+        <div class="metric-row" style="margin-top:8px">
+          <span class="metric-label">Avg chunk latency</span>
+          <span class="metric-value" id="m-latency">—</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Frames received</span>
+          <span class="metric-value" id="m-frames">0</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Chunks processed</span>
+          <span class="metric-value" id="m-chunks">0</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-label">Queue lag</span>
+          <span class="metric-value" id="m-lag">—</span>
+        </div>
+        <button class="btn-secondary" id="btn-stats" style="margin-top:10px">Request Stats</button>
+      </div>
+
+      <!-- Log -->
+      <div class="card">
+        <h3>Log</h3>
+        <div id="log-box"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ── State ──────────────────────────────────────────────────────────────
+    let ws = null;
+    const canvas  = document.getElementById('avatar-canvas');
+    const ctx     = canvas.getContext('2d');
+    let frameCount  = 0;
+    let fpsFrames   = 0;
+    let lastFpsTime = Date.now();
+    let currentFps  = 0;
+    let streamStartTime = null;
+
+    // ── Logging ────────────────────────────────────────────────────────────
+    function log(msg, cls='') {
+      const box = document.getElementById('log-box');
+      const d   = new Date().toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      const el  = document.createElement('div');
+      el.className = `log-line ${cls}`;
+      el.textContent = `[${d}] ${msg}`;
+      box.appendChild(el);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    // ── FPS tracker ────────────────────────────────────────────────────────
+    setInterval(() => {
+      const now  = Date.now();
+      const dt   = (now - lastFpsTime) / 1000;
+      currentFps = Math.round(fpsFrames / dt);
+      fpsFrames  = 0;
+      lastFpsTime = now;
+
+      document.getElementById('fps-display').textContent = `${currentFps} FPS`;
+      document.getElementById('m-fps').textContent = `${currentFps}`;
+      const bar = document.getElementById('fps-bar');
+      const pct = Math.min(currentFps / 30 * 100, 100);
+      bar.style.width = pct + '%';
+      bar.style.background = currentFps >= 22 ? '#00e676' : currentFps >= 15 ? '#ffd740' : '#ff5252';
+
+      // lag
+      if (streamStartTime) {
+        const expectedFrames = (Date.now() - streamStartTime) / 1000 * 25;
+        const lag = expectedFrames - frameCount;
+        const lagEl = document.getElementById('m-lag');
+        lagEl.textContent = `${lag.toFixed(0)} frames`;
+        lagEl.className = 'metric-value ' + (lag < 5 ? 'good' : lag < 15 ? 'warn' : 'bad');
+      }
+    }, 1000);
+
+    // ── Draw frame ─────────────────────────────────────────────────────────
+    function drawFrame(b64jpeg) {
+      const img = new Image();
+      img.onload = () => {
+        canvas.width  = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        frameCount++;
+        fpsFrames++;
+        document.getElementById('frame-counter').textContent = `Frame ${frameCount}`;
+        document.getElementById('m-frames').textContent = frameCount;
+      };
+      img.src = 'data:image/jpeg;base64,' + b64jpeg;
+    }
+
+    // ── WebSocket ──────────────────────────────────────────────────────────
+    function connect() {
+      const url      = document.getElementById('server-url').value.trim();
+      const avatarId = document.getElementById('avatar-id').value.trim();
+      const wsUrl    = `${url}/stream/${avatarId}`;
+      log(`Connecting to ${wsUrl}...`);
+
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => {
+        log('Connected ✓', 'ok');
+        setStatus(true);
+        streamStartTime = Date.now();
+        document.getElementById('btn-connect').style.display = 'none';
+        document.getElementById('btn-disconnect').style.display = 'block';
+      };
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'frame') {
+          drawFrame(msg.data);
+        } else if (msg.type === 'stats') {
+          document.getElementById('m-chunks').textContent = msg.chunks_processed || 0;
+          const lat = msg.avg_latency_ms;
+          if (lat !== undefined) {
+            const el = document.getElementById('m-latency');
+            el.textContent = `${lat.toFixed(0)}ms`;
+            el.className = 'metric-value ' + (lat < 100 ? 'good' : lat < 200 ? 'warn' : 'bad');
+          }
+          log(`Stats: ${JSON.stringify({chunks: msg.chunks_processed, latency: msg.avg_latency_ms?.toFixed(0)+'ms'})}`);
+        } else if (msg.type === 'error') {
+          log(`Server error: ${msg.message}`, 'err');
+        }
+      };
+      ws.onclose  = () => { log('Disconnected'); setStatus(false); resetButtons(); };
+      ws.onerror  = (e) => { log('WebSocket error', 'err'); };
+    }
+
+    function disconnect() {
+      if (ws) { ws.send(JSON.stringify({type:'stop'})); ws.close(); }
+      resetButtons();
+    }
+
+    function sendAudioChunk() {
+      const path = document.getElementById('audio-path').value.trim();
+      if (!path || !ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({type:'audio_chunk', path}));
+      log(`Sent chunk: ${path}`);
+    }
+
+    function requestStats() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({type:'stats'}));
+    }
+
+    function setStatus(live) {
+      document.getElementById('status-dot').className = 'status-dot' + (live ? ' live' : '');
+      document.getElementById('status-text').textContent = live ? 'Live' : 'Disconnected';
+    }
+
+    function resetButtons() {
+      document.getElementById('btn-connect').style.display = 'block';
+      document.getElementById('btn-disconnect').style.display = 'none';
+    }
+
+    document.getElementById('btn-connect').addEventListener('click', connect);
+    document.getElementById('btn-disconnect').addEventListener('click', disconnect);
+    document.getElementById('btn-send-audio').addEventListener('click', sendAudioChunk);
+    document.getElementById('btn-stats').addEventListener('click', requestStats);
+  </script>
+</body>
+</html>
