@@ -15,4 +15,9 @@ ffmprobe*
 ffplay*
 debug
 exp_out
-.gradio
+.gradiomodels/
+results/
+data/
+*.pth
+*.bin
+__pycache__/
